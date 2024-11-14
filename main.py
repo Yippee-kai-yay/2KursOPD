@@ -10,9 +10,10 @@ officeTag = '{urn:oasis:names:tc:opendocument:xmlns:office:1.0}'
 dcTag = '{http://purl.org/dc/elements/1.1/}'
 
 defaultFont= {}
-
-def findDefaultFont(rootStyles):
+rootStyles = ET.Element("Root")
+def findDefaultFont(rootStyles, name=None):
     global defaultFont
+
     for elem in rootStyles.iter(styleTag + 'default-style'):
         if elem.get(styleTag+ 'family')=='paragraph':
             for subelem in elem.iter():
@@ -28,7 +29,23 @@ def findDefaultFont(rootStyles):
                     defaultFont['height'] = subelem.get(foTag + 'line-height')
                     defaultFont['mrgTop'] = subelem.get(foTag + 'margin-top')
                     defaultFont['mrgBottom'] = subelem.get(foTag + 'margin-bottom')
-                    defaultFont['align'] = subelem.get(foTag + 'text-align')
+                    defaultFont['align'] = subelem.get(foTag + 'text-align') if not None else 'start'
+    for elem in rootStyles.iter(styleTag + 'style'):
+        if name is not None and elem.get(styleTag+ 'name')==name:
+            for subelem in elem.iter():
+                if subelem.tag == styleTag + 'text-properties':
+                    defaultFont['name'] = subelem.get(styleTag + 'font-name') if not None else defaultFont['name']
+                    defaultFont['size'] = subelem.get(foTag + 'font-size') if not None else defaultFont['size']
+                    defaultFont['weight'] = subelem.get(foTag + 'font-weight') if not None else defaultFont['weight']
+                    defaultFont['background'] = subelem.get(foTag + 'background-color') if not None else defaultFont['background']
+                    defaultFont['underline'] = subelem.get(styleTag + 'text-underline-type') if not None else defaultFont['underline']
+                    defaultFont['color'] = subelem.get(foTag + 'color') if not None else defaultFont['color']
+                if subelem.tag == styleTag + 'paragraph-properties':
+                    defaultFont['indent'] = subelem.get(foTag + 'text-indent') if not None else defaultFont['indent']
+                    defaultFont['height'] = subelem.get(foTag + 'line-height') if not None else defaultFont['height']
+                    defaultFont['mrgTop'] = subelem.get(foTag + 'margin-top') if not None else defaultFont['mrgTop']
+                    defaultFont['mrgBottom'] = subelem.get(foTag + 'margin-bottom') if not None else defaultFont['mrgBottom']
+                    defaultFont['align'] = subelem.get(foTag + 'text-align') if not None else defaultFont['align']
 
 def showText(root):
     for elem in root.iter():
@@ -61,10 +78,18 @@ def check_all_attributes(element):
     for attr, value in element.attrib.items():
         print(f"Attribute: {attr}, Value: {value}")
 
-def styleProp(name, root):
-    font = dict(defaultFont)
+def styleProp(name, root, findDefault = True):
     for style in root.iter(styleTag + 'style'  ):
         if style.get(styleTag + 'name') == name:
+            if findDefault:
+                if style.get(styleTag+'parent-style-name') is not None:
+                    findDefaultFont(rootStyles, style.get(styleTag+'parent-style-name'))
+
+                else:
+                    findDefaultFont(rootStyles)
+
+            font = dict(defaultFont)
+            #print(name, style.get(styleTag + 'parent-style-name'), defaultFont)
             for subelem in style:
                 if subelem.tag == styleTag+ 'text-properties':
                     if subelem.get(styleTag + 'font-name') is not None:
@@ -122,43 +147,115 @@ def fontMark(requirements, elem, props):
 
     if reqFont is not None and props['name'] is not None and find_differences(props['name'], reqFont):
         markMistake(elem, 'Неверный шрифт: ' + props['name'])
+        #print(elem.get(textTag + 'style-name'), props['name'], elem.text, props)
     if reqSize is not None and props['size'] is not None and find_differences(props['size'], reqSize):
         markMistake(elem, 'Неверный размер шрифта: ' + props['size'])
     if reqWgt is not None and props['weight'] is not None and find_differences(props['weight'], reqWgt):
         markMistake(elem, 'Курсив/полужирный')
-    if reqNoBack and props['background'] != 'transparent':
+    if reqNoBack and props['background'] != 'transparent' and props['background'] != '#ffffff' and props['background'] != None :
         markMistake(elem, 'Выделение цветом')
-    if reqNoUnd and props['underline'] != 'none':
+    if reqNoUnd and props['underline'] != 'none' and props['underline'] != None:
         markMistake(elem, 'Выделение подчёркиванием')
 
 
 
 def styleMark(requirements, root):
-    reqInd = str(round(float(requirements['Indent'])/2.5391, 4))+'in' if requirements['Indent'] is not None else None
+    reqInd = requirements['Indent'] if requirements['Indent'] is not None else None
     reqAlign = requirements['Align'] if not None else None
     reqHgt = str(round(float(requirements['Height'])*100))+'%' if requirements['Height'] is not None else None
     for elem in root.iter(textTag + 'p'):
         if elem.get(textTag + 'style-name') == 'Текстпримечания':
             continue
         props = styleProp(elem.get(textTag + 'style-name'), root)
-        if reqAlign is not None and props['align'] is not None and find_differences(props['align'], reqAlign):
-            markMistake(elem, 'Неверное выравнивание: ' + props['align'])
-        if reqInd is not None and props['indent'] is not None and find_differences(props['indent'], reqInd):
-            markMistake(elem, 'Неверный отступ')
-        if reqHgt is not None and props['height'] is not None and find_differences(props['height'], reqHgt):
-            markMistake(elem, 'Неверный междустрочный интервал')
+        if props is None:
+            findDefaultFont(rootStyles)
+            props = defaultFont
+        text = "1234567"
+        if elem.text is not None:
+            text = elem.text
+        if text[0:7] != "Рисунок":
+            if reqAlign is not None and props['align'] is not None and find_differences(props['align'], reqAlign):
+                markMistake(elem, 'Неверное выравнивание: ' + props['align'])
+            if reqInd is not None and props['indent'] is not None:
+                text = props['indent']
+                if(text[-2:]=='in'):
+                    ind = float(text[0:-2])
+                    ind = ind*2.5391
+                else:
+                    ind = float(text[0:-2])
+                ind = round(ind, 2)
+                #print(ind)
+                if find_differences(str(ind), reqInd):
+                    markMistake(elem, 'Неверный отступ')
+            if reqHgt is not None and props['height'] is not None and find_differences(props['height'], reqHgt):
+                markMistake(elem, 'Неверный междустрочный интервал')
 
         if len(elem)>0:
             for subelem in elem.iter(textTag+'span'):
-                props = styleProp(subelem.get(textTag + 'style-name'), root)
-                if props is not None and subelem.text is not None:
-                    fontMark(requirements, subelem, props)
+                if subelem.text is not None:
+                    if subelem.get(textTag + 'parent-style-name') is None:
+                        defaultFont = styleProp(elem.get(textTag + 'style-name'), root)
+                        props = styleProp(subelem.get(textTag + 'style-name'), root, False)
+                    else:
+                        props = styleProp(subelem.get(textTag + 'style-name'), root)
+                    if props is not None:
+                        fontMark(requirements, subelem, props)
         else:
-            props = styleProp(elem.get(textTag + 'style-name'), root)
-            if props is not None and elem.text is not None:
-                fontMark(requirements, elem, props)
+            if elem.text is not None:
+                props = styleProp(elem.get(textTag + 'style-name'), root)
+                if props is not None:
+                    #print()
+                    fontMark(requirements, elem, props)
+
+def checkPinturas(root):
+    links = []
+    pics = []
+    for elem in root.iter(textTag+'p'):
+        if len(elem)>0:
+            text=''
+            for subelem in elem.iter():
+                text = text + str(subelem.text)+' '
+        else:
+            text=elem.text
+
+        if text is not None and text.find('Рисунок ')!=-1:
+            words = text.split(' ')
+            num = words[1]
+            #print(words)
+            pics = pics + [num]
+            if num not in links:
+                markMistake(elem,'Отсутствует ссылка на риcyнoк')
+        if text is not None and (text.find('рисунке ') != -1 or text.find('(рисунок ') != -1 or text.find('(рисунки ') != -1 or text.find('рисунках ')!= -1):
+            words = text.split(' ')
+            #print(words)
+            if text.find('рисунке ') != -1:
+                ind = words.index('рисунке')
+                num = words[ind+1]
+                if len(num)>3:
+                    num = num[:-1]
+            if text.find('(рисунок ') != -1:
+                ind = words.index('(рисунок')
+                num = words[ind + 1]
+                if len(num) > 3:
+                    num = num[:-2]
+            if text.find('(рисунки ') != -1 or text.find('рисунках ')!= -1:
+                if  '(рисунки' in words: ind = words.index('(рисунки')
+                else: ind = words.index('рисунках')
+                first, left = words[ind+1].split('.')
+                if len(left)>3:
+                    left = left[:-1]
+                first, right = words[ind+3].split('.')
+                if len(right)>3:
+                    right = right[:-1]
+                #print(left,right)
+                num = -1
+                for i in range(int(left),int(right)):
+                    links = links + [first+'.'+str(i)]
 
 
+            #print(num , words)
+            links = links + [num]
+        #print(pics, links)
 
 def numberMark(requirements, root): #doesnt work
     reqNoFirst = True if requirements['Numbering_First'] != 'Yes' else None
@@ -174,33 +271,88 @@ def numberMark(requirements, root): #doesnt work
                         markMistake(SSelem,'Непраильный размер шрифта')
 #^doesnt work^
 
-def headerMark(requirements, root):
+def headerFontCheck(elem, level, requirements, props):
     reqFont = requirements['Font'] if not None else None
     reqNoBack = True if requirements['Allow background'] != 'Yes' else None
     reqNoUnd = True if requirements['Allow underline'] != 'Yes' else None
+    reqSize = requirements['Heading' + level + '_Size'] + 'pt' if requirements['Heading1_Size'] is not None else None
+    reqWgt = requirements['Heading' + level + '_Weight'] if not None else None
 
 
+    if reqFont is not None and props['name'] is not None and find_differences(props['name'], reqFont):
+        markMistake(elem, 'Неверный шрифт заголовка: ' + props['name'])
+    if reqSize is not None and props['size'] is not None and find_differences(props['size'], reqSize):
+        markMistake(elem, 'Неверный размер шрифта заголовка: ' + props['size'])
+    if reqWgt is not None and props['weight'] is not None and find_differences(props['weight'], reqWgt):
+        markMistake(elem, 'Неверное выделение заголовка: ' + props['weight'])
+    if reqNoBack and props['background'] != 'transparent' and props['background'] != None:
+        markMistake(elem, 'Выделение заголовка цветом')
+    if reqNoUnd and props['underline'] != 'none' and props['underline'] != None:
+        markMistake(elem, 'Выделение заголовка подчёркиванием')
+
+def headerMark(requirements, root):
+
+    lv1Num = 0
+    lv2Num = 0
+    lv3Num = 0
+    lv4Num = 0
     for elem in root.iter(textTag + 'h'):
-        props = styleProp(elem.get(textTag+'style-name'),root)
+
         level = elem.get(textTag+'outline-level')
+        reqAlign = requirements['Heading' + level + '_Align'] if not None else None
 
-        reqSize = requirements['Heading'+level+'_Size'] + 'pt' if requirements['Heading1_Size'] is not None else None
-        reqWgt = requirements['Heading'+level+'_Weight'] if not None else None
-        reqAlign = requirements['Heading'+level+'_Align'] if not None else None
+        if len(elem) > 0:
+            text = ''
+            for subelem in elem.iter(textTag + 'span'):
+                #print(subelem.text)
+                if subelem.text is not None:
+                    #print('before',text, str(subelem.text))
+                    text = text+ str(subelem.text)
+                    #print('after',text)
+        else:
+            text = elem.text
+        #print(text)
+
+        if text is not None and text != '':
+            if len(elem) > 0:
+                for subelem in elem.iter(textTag + 'span'):
+                    if subelem.text is not None:
+                        findDefaultFont(rootStyles,subelem.get(textTag + 'parent-style-name') )
+                        global defaultFont
+                        defaultFont = styleProp(elem.get(textTag + 'style-name'), root)
+                        #print(elem.get(textTag + 'style-name'), defaultFont)
+                        props = styleProp(subelem.get(textTag + 'style-name'), root,False)
+                        #print(subelem.get(textTag + 'style-name'),props)
+                        headerFontCheck(subelem,level,requirements, props)
+            else:
+                props = styleProp(elem.get(textTag + 'style-name'), root)
+                if reqAlign is not None and props['align'] is not None and find_differences(props['align'], reqAlign):
+                    markMistake(elem, 'Неверное выравнивание заголовка: ' + props['align'])
+                headerFontCheck(elem, level, requirements, props)
+            if level == '1':
+                lv1Num+=1
+                lv2Num = 0
 
 
-        if reqFont is not None and props['name'] is not None and find_differences(props['name'], reqFont):
-            markMistake(elem, 'Неверный шрифт: ' + props['name'])
-        if reqSize is not None and props['size'] is not None and find_differences(props['size'], reqSize):
-            markMistake(elem, 'Неверный размер шрифта: ' + props['size'])
-        if reqWgt is not None and props['weight'] is not None and find_differences(props['weight'], reqWgt):
-            markMistake(elem, 'Неверное выделение: '+ props['weight'])
-        if reqNoBack and props['background'] != 'transparent':
-            markMistake(elem, 'Выделение цветом')
-        if reqNoUnd and props['underline'] != 'none':
-            markMistake(elem, 'Выделение подчёркиванием')
-        if reqAlign is not None and props['align'] is not None and find_differences(props['align'], reqAlign):
-            markMistake(elem, 'Неверное выравнивание: ' + props['align'])
+                if find_differences(text[0], str(lv1Num)):
+                    markMistake(elem, 'Неверная нумерация уровня 1')
+            if level == '2':
+                lv2Num+=1
+                lv3Num = 0
+                #print(text[2], str(lv2Num),find_differences(text[2], str(lv2Num)))
+                if find_differences(text[2], str(lv2Num)):
+                    markMistake(elem, 'Неверная нумерация уровня 2')
+            if level == '3':
+                lv2Num+=1
+                lv4Num = 0
+                if find_differences(text[4], str(lv3Num)):
+                    markMistake(elem, 'Неверная нумерация уровня 3')
+            if level == '4':
+                lv2Num+=1
+                if find_differences(text[6], str(lv4Num)):
+                    markMistake(elem, 'Неверная нумерация уровня 4')
+
+
 
 
 
@@ -213,17 +365,21 @@ def textToDict(text):
 
 odf_file = 'test.odt'
 req_file = 'reqs.txt'
-
+print('!')
 content = zipfile.ZipFile(odf_file).open('content.xml') .read()
 styles = zipfile.ZipFile(odf_file).open('styles.xml') .read()
 root = ET.fromstring(content)
 rootStyles = ET.fromstring(styles)
 
+
+
 reqs = textToDict(open(req_file).read())
 
 findDefaultFont(rootStyles)
+checkPinturas(root)
 styleMark(reqs, root)
 headerMark(reqs,root)
+
 
 outputXml = ET.tostring(root, encoding='utf-8', xml_declaration=True)
 with zipfile.ZipFile(odf_file, 'r') as zip_file:
